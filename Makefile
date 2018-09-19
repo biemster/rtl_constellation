@@ -6,7 +6,7 @@ CFLAGS?=-O2 `pkg-config --cflags librtlsdr` -g
 LDFLAGS?=-lglut -lGL -lrtlsdr -lfftw3 -lm `pkg-config --libs librtlsdr`
 
 all: 
-	$(CC) $(CFLAGS) -o rtl_waterfall rtl_waterfall.c $(LDFLAGS)
+	$(CC) $(CFLAGS) -o rtl_constellation rtl_constellation.c $(LDFLAGS)
 
 clean:
-	rm -f rtl_waterfall
+	rm -f rtl_constellation
