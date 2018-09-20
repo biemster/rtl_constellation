@@ -110,15 +110,54 @@ void readData(int val) {
 	}
 	
 	// fade current buffer
-
+	int i,j;
+	for(i = 0 ; i < GLUT_BUFSIZE ; i++) {
+		for(j = 0 ; j < GLUT_BUFSIZE ; j++) {
+			if(texture[i][j][0] > 0.9f) {
+				texture[i][j][0] = 0.5f;
+				texture[i][j][1] = 0.5f;
+				texture[i][j][2] = 0.0f;
+			}
+			else if(texture[i][j][0] > 0.4f) {
+				texture[i][j][0] = 0.0f;
+				texture[i][j][1] = 1.0f;
+				texture[i][j][2] = 0.0f;
+			}
+			else if(texture[i][j][1] > 0.9f) {
+				texture[i][j][0] = 0.0f;
+				texture[i][j][1] = 0.5f;
+				texture[i][j][2] = 0.5f;
+			}
+			else if(texture[i][j][1] > 0.4f) {
+				texture[i][j][0] = 0.0f;
+				texture[i][j][1] = 0.0f;
+				texture[i][j][2] = 1.0f;
+			}
+			else if(texture[i][j][2] > 0.9f) {
+				texture[i][j][0] = 0.0f;
+				texture[i][j][1] = 0.0f;
+				texture[i][j][2] = 0.5f;
+			}
+			else if(texture[i][j][2] > 0.4f) {
+				texture[i][j][0] = 0.0f;
+				texture[i][j][1] = 0.0f;
+				texture[i][j][2] = 0.0f;
+			}
+		}
+	}
 
 	// add new values
 	uint32_t N = out_block_size/2;
-	int i;
 	for(i = 0 ; i < N ; i++)
 	{
-		double I = (buffer[i*2] -127) * 0.008;		// adc is 8 bits, map (0,255) to (-1,1)
-		double Q = (buffer[i*2 +1] -127) * 0.008;
+		int I = (int)((buffer[i*2] / 255.) * GLUT_BUFSIZE);		// adc is 8 bits, map (0,255) to (0,1) * GLUT_BUFSIZE
+		int Q = (int)((buffer[i*2 +1] / 255.) * GLUT_BUFSIZE);
+		
+		if(I >= 0 && Q >= 0 && I < GLUT_BUFSIZE && Q < GLUT_BUFSIZE) {
+			texture[I][Q][0] = 1.0f; // red
+			texture[I][Q][1] = 0.0f; // green
+			texture[I][Q][2] = 0.0f; // blue
+		}
 	}
 
 	glutPostRedisplay();
@@ -219,10 +258,11 @@ int main(int argc, char **argv)
 	if (rtlsdr_reset_buffer(dev) < 0)
 		fprintf(stderr, "WARNING: Failed to reset buffers.\n");
 
+	buffer = malloc(DEFAULT_BUF_LENGTH * sizeof(uint8_t));
 	
 	/* start reading samples */
 	fprintf(stderr, "Update frequency is %.2fHz.\n",((double)DEFAULT_SAMPLE_RATE / (double)DEFAULT_BUF_LENGTH));
-	fprintf(stderr, "Press [Q,q,w,W] to change frequency, [a,z] to adjust color sensitivity, [f,g,h] to adjust gain, ESC to quit.\n");
+	fprintf(stderr, "Press ESC to quit.\n");
 
 	glutTimerFunc(0,readData,0);
 	glutMainLoop();
