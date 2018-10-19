@@ -29,6 +29,7 @@
 #include <stdbool.h>
 
 #include <fftw3.h>
+#include <complex.h>
 
 #include "rtl-sdr.h"
 
@@ -43,13 +44,15 @@ char strFreq[FBUF_LEN];
 float pwr_max;
 float pwr_diff;
 
+int ncalls = 50;
 uint8_t *buffer;
+uint8_t *pll;
 fftw_complex *fftw_in;
 fftw_complex *fftw_out;
 fftw_plan fftw_p;
 
-#define DEFAULT_SAMPLE_RATE		2e6
-#define DEFAULT_BUF_LENGTH		(8 * 16384)		// 2^17, [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
+#define DEFAULT_BUF_LENGTH		(4 * 16384)		// 2^17, [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
+#define DEFAULT_SAMPLE_RATE		DEFAULT_BUF_LENGTH *16
 
 // Not all tuners can go to either extreme...
 #define RTL_MIN_FREQ 22e6
@@ -248,6 +251,47 @@ int glut_init(int *argc,char **argv)
 	glutKeyboardFunc(glut_keyboard);
 }
 
+float pll_lock() {
+	// IMPROVE: add to loop in readData()
+	// http://liquidsdr.org/blog/pll-simple-howto/
+
+	// parameters and simulation options
+	float        alpha         =  0.05f;   // phase adjustment factor
+	unsigned int n             =  10000;     // number of samples
+
+	// initialize states
+	float beta              = 0.5*alpha*alpha; // frequency adjustment factor
+	float phase_out         = 0.0f;            // output signal phase
+	float frequency_out     = 0.0f;            // output signal frequency
+	float frequency_out_avg = 0.0f;            // output signal frequency
+
+	uint32_t N = DEFAULT_BUF_LENGTH/2;
+	int i;
+	for(i = 0 ; i < N ; i++)
+	{
+		float sigI = (buffer[i*2] -127) * 0.008;		// adc is 8 bits, map (0,255) to (-1,1)
+		float sigQ = (buffer[i*2 +1] -127) * 0.008;
+		float complex signal_in  = sigI+sigQ*I;
+		float complex signal_out = cexpf(_Complex_I * phase_out);
+
+		pll[i*2] = (crealf(signal_out) / 0.008) + 127;
+		pll[i*2 +1] = (cimagf(signal_out) / 0.008) + 127;
+
+		// compute phase error estimate
+		float phase_error = cargf( signal_in * conjf(signal_out) );
+
+		// apply loop filter and correct output phase and frequency
+		phase_out     += alpha * phase_error;    // adjust phase
+		frequency_out +=  beta * phase_error;    // adjust frequency
+
+		// increment input and output phase values
+		phase_out += frequency_out;
+		frequency_out_avg += (alpha + beta) * phase_error;
+	}
+
+	return frequency_out_avg / N;
+}
+
 void readData(int line_idx) {	
 	uint32_t out_block_size = DEFAULT_BUF_LENGTH;
 	int n_read;
@@ -263,6 +307,9 @@ void readData(int line_idx) {
 		fprintf(stderr, "Short read, samples lost, exiting!\n");
 		return;
 	}
+
+	float pll_freq = pll_lock();
+ 	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
 	
 	// fade current buffer
 	int i,j;
@@ -302,18 +349,21 @@ void readData(int line_idx) {
 	}
 
 	// add new values
+	if(ncalls > -1) ncalls--;
 	uint32_t N = out_block_size/2;
 	for(i = 0 ; i < N ; i++)
 	{
-		int I = (int)((buffer[i*2] / 255.) * GLUT_BUFSIZE);		// adc is 8 bits, map (0,255) to (0,1) * GLUT_BUFSIZE
-		int Q = (int)((buffer[i*2 +1] / 255.) * GLUT_BUFSIZE);
+		int sigI = (int)((buffer[i*2] / 255.) * GLUT_BUFSIZE);		// adc is 8 bits, map (0,255) to (0,1) * GLUT_BUFSIZE
+		int sigQ = (int)((buffer[i*2 +1] / 255.) * GLUT_BUFSIZE);
+
+		if(!ncalls) fprintf(stdout, "%0.4f,%0.4f\n", (buffer[i*2] -127) * 0.008,(buffer[i*2 +1] -127) * 0.008);
 		
-		if(I >= 0 && Q >= 0 &&
-			I < GLUT_BUFSIZE && Q < GLUT_BUFSIZE &&
-			!(show_spectrum && Q < SPECTRUM_LINES)) {
-			texture[I][Q][0] = 1.0f; // red
-			texture[I][Q][1] = 0.0f; // green
-			texture[I][Q][2] = 0.0f; // blue
+		if(sigI >= 0 && sigQ >= 0 &&
+			sigI < GLUT_BUFSIZE && sigQ < GLUT_BUFSIZE &&
+			!(show_spectrum && sigQ < SPECTRUM_LINES)) {
+			texture[sigI][sigQ][0] = 1.0f; // red
+			texture[sigI][sigQ][1] = 0.0f; // green
+			texture[sigI][sigQ][2] = 0.0f; // blue
 		}
 
 		if(show_spectrum) {
@@ -549,6 +599,7 @@ int main(int argc, char **argv)
 	///
 	uint32_t out_block_size = DEFAULT_BUF_LENGTH;
 	buffer = malloc(out_block_size * sizeof(uint8_t));
+	pll = malloc(out_block_size * sizeof(uint8_t));
 	fftw_in = fftw_malloc ( sizeof ( fftw_complex ) * out_block_size/2 );
 	fftw_out = fftw_malloc ( sizeof ( fftw_complex ) * out_block_size/2 );
 	
