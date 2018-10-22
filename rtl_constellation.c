@@ -38,21 +38,21 @@
 bool show_spectrum;
 
 float texture[GLUT_BUFSIZE][GLUT_BUFSIZE][3];
-float offset;
 #define FBUF_LEN 8 // room for {'1', '7', '6', '6', '.', '0', '\0'}
 char strFreq[FBUF_LEN];
 float pwr_max;
 float pwr_diff;
 
-int ncalls = 50;
 uint8_t *buffer;
 uint8_t *pll;
 fftw_complex *fftw_in;
 fftw_complex *fftw_out;
 fftw_plan fftw_p;
 
-#define DEFAULT_BUF_LENGTH		(4 * 16384)		// 2^17, [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
+#define DEFAULT_BUF_LENGTH		(4 * 16384)		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
 #define DEFAULT_SAMPLE_RATE		DEFAULT_BUF_LENGTH *16
+
+#define PLL_LOCK_STEPS 2000
 
 // Not all tuners can go to either extreme...
 #define RTL_MIN_FREQ 22e6
@@ -257,7 +257,6 @@ float pll_lock() {
 
 	// parameters and simulation options
 	float        alpha         =  0.05f;   // phase adjustment factor
-	unsigned int n             =  10000;     // number of samples
 
 	// initialize states
 	float beta              = 0.5*alpha*alpha; // frequency adjustment factor
@@ -266,6 +265,7 @@ float pll_lock() {
 	float frequency_out_avg = 0.0f;            // output signal frequency
 
 	uint32_t N = DEFAULT_BUF_LENGTH/2;
+	int navg = 0;
 	int i;
 	for(i = 0 ; i < N ; i++)
 	{
@@ -273,6 +273,7 @@ float pll_lock() {
 		float sigQ = (buffer[i*2 +1] -127) * 0.008;
 		float complex signal_in  = sigI+sigQ*I;
 		float complex signal_out = cexpf(_Complex_I * phase_out);
+		float phase_out_prev = phase_out;
 
 		pll[i*2] = (crealf(signal_out) / 0.008) + 127;
 		pll[i*2 +1] = (cimagf(signal_out) / 0.008) + 127;
@@ -284,12 +285,17 @@ float pll_lock() {
 		phase_out     += alpha * phase_error;    // adjust phase
 		frequency_out +=  beta * phase_error;    // adjust frequency
 
-		// increment input and output phase values
+		// increment output phase values
 		phase_out += frequency_out;
-		frequency_out_avg += (alpha + beta) * phase_error;
+
+		// if the phase error is small, the loop is locked and we can use the frequency in the average
+		if(i > PLL_LOCK_STEPS && fabs(phase_error) < 0.1 * 2*M_PI) {
+			frequency_out_avg += phase_out - phase_out_prev;
+			navg++;
+		}
 	}
 
-	return frequency_out_avg / N;
+	return navg ? frequency_out_avg / navg : 0.;
 }
 
 void readData(int line_idx) {	
@@ -309,7 +315,10 @@ void readData(int line_idx) {
 	}
 
 	float pll_freq = pll_lock();
- 	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
+	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
+ 	if(pll_freq == 0.) {
+ 		return;
+ 	}
 	
 	// fade current buffer
 	int i,j;
@@ -349,15 +358,14 @@ void readData(int line_idx) {
 	}
 
 	// add new values
-	if(ncalls > -1) ncalls--;
-	uint32_t N = out_block_size/2;
-	for(i = 0 ; i < N ; i++)
-	{
+	uint32_t N = out_block_size/2;	
+	float i_flt = 0.;
+	for(i = 0 ; i < N ; i++) {
+		i_flt += (2*M_PI) / pll_freq;
+		i = (int)i_flt < N ? (int)i_flt : N-1;
 		int sigI = (int)((buffer[i*2] / 255.) * GLUT_BUFSIZE);		// adc is 8 bits, map (0,255) to (0,1) * GLUT_BUFSIZE
 		int sigQ = (int)((buffer[i*2 +1] / 255.) * GLUT_BUFSIZE);
 
-		if(!ncalls) fprintf(stdout, "%0.4f,%0.4f\n", (buffer[i*2] -127) * 0.008,(buffer[i*2 +1] -127) * 0.008);
-		
 		if(sigI >= 0 && sigQ >= 0 &&
 			sigI < GLUT_BUFSIZE && sigQ < GLUT_BUFSIZE &&
 			!(show_spectrum && sigQ < SPECTRUM_LINES)) {
