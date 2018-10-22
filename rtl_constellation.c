@@ -316,9 +316,6 @@ void readData(int line_idx) {
 
 	float pll_freq = pll_lock();
 	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
- 	if(pll_freq == 0.) {
- 		return;
- 	}
 	
 	// fade current buffer
 	int i,j;
@@ -361,17 +358,19 @@ void readData(int line_idx) {
 	uint32_t N = out_block_size/2;	
 	float i_flt = 0.;
 	for(i = 0 ; i < N ; i++) {
-		i_flt += (2*M_PI) / pll_freq;
-		i = (int)i_flt < N ? (int)i_flt : N-1;
-		int sigI = (int)((buffer[i*2] / 255.) * GLUT_BUFSIZE);		// adc is 8 bits, map (0,255) to (0,1) * GLUT_BUFSIZE
-		int sigQ = (int)((buffer[i*2 +1] / 255.) * GLUT_BUFSIZE);
+		if(i == (int)(i_flt + ((2*M_PI) / pll_freq)) && pll_freq > 0.) {
+			// draw constellation points
+			i_flt += (2*M_PI) / pll_freq;
+			int sigI = (int)((buffer[i*2] / 255.) * GLUT_BUFSIZE);		// adc is 8 bits, map (0,255) to (0,1) * GLUT_BUFSIZE
+			int sigQ = (int)((buffer[i*2 +1] / 255.) * GLUT_BUFSIZE);
 
-		if(sigI >= 0 && sigQ >= 0 &&
-			sigI < GLUT_BUFSIZE && sigQ < GLUT_BUFSIZE &&
-			!(show_spectrum && sigQ < SPECTRUM_LINES)) {
-			texture[sigI][sigQ][0] = 1.0f; // red
-			texture[sigI][sigQ][1] = 0.0f; // green
-			texture[sigI][sigQ][2] = 0.0f; // blue
+			if(sigI >= 0 && sigQ >= 0 &&
+				sigI < GLUT_BUFSIZE && sigQ < GLUT_BUFSIZE &&
+				!(show_spectrum && sigQ < SPECTRUM_LINES)) {
+				texture[sigI][sigQ][0] = 1.0f; // red
+				texture[sigI][sigQ][1] = 0.0f; // green
+				texture[sigI][sigQ][2] = 0.0f; // blue
+			}
 		}
 
 		if(show_spectrum) {
