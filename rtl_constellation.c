@@ -50,7 +50,7 @@ fftw_complex *fftw_out;
 fftw_plan fftw_p;
 
 #define DEFAULT_BUF_LENGTH		(4 * 16384)		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
-#define DEFAULT_SAMPLE_RATE		DEFAULT_BUF_LENGTH *16
+#define DEFAULT_SAMPLE_RATE		DEFAULT_BUF_LENGTH *32
 
 #define PLL_LOCK_STEPS 2000
 
@@ -357,6 +357,14 @@ void readData(int line_idx) {
 	// add new values
 	uint32_t N = out_block_size/2;	
 	float i_flt = 0.;
+	for(i = PLL_LOCK_STEPS ; i < N ; i++) {
+		// phase align constellation: find starting index
+		if(cargf(pll[i*2] + pll[i*2 +1]*I) < pll_freq) {
+			i_flt = (float)i;
+			// fprintf(stderr, "\rstart idx %04d", i);
+			break;
+		}
+	}
 	for(i = 0 ; i < N ; i++) {
 		if(i == (int)(i_flt + ((2*M_PI) / pll_freq)) && pll_freq > 0.) {
 			// draw constellation points
