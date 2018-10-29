@@ -49,10 +49,11 @@ fftw_complex *fftw_in;
 fftw_complex *fftw_out;
 fftw_plan fftw_p;
 
-#define DEFAULT_BUF_LENGTH		(4 * 16384)		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
-#define DEFAULT_SAMPLE_RATE		DEFAULT_BUF_LENGTH *32
+#define DEFAULT_BUF_LENGTH		1024 * 16		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
+// #define DEFAULT_SAMPLE_RATE		DEFAULT_BUF_LENGTH *32
+#define DEFAULT_SAMPLE_RATE		1024 * 1e3
 
-#define PLL_LOCK_STEPS 2000
+#define PLL_LOCK_STEPS 2048
 
 // Not all tuners can go to either extreme...
 #define RTL_MIN_FREQ 22e6
@@ -315,7 +316,7 @@ void readData(int line_idx) {
 	}
 
 	float pll_freq = pll_lock();
-	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
+//	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
 	
 	// fade current buffer
 	int i,j;
@@ -625,7 +626,7 @@ int main(int argc, char **argv)
 
 	
 	/* start reading samples */
-	fprintf(stderr, "Update frequency is %.2fHz.\n",((double)DEFAULT_SAMPLE_RATE / (double)DEFAULT_BUF_LENGTH));
+	fprintf(stderr, "Update frequency is %.2fHz.\n",((double)DEFAULT_SAMPLE_RATE / ((double)DEFAULT_BUF_LENGTH)));
 	fprintf(stderr, "Press [Q,q,w,W] to change frequency, [a,z] to adjust color sensitivity, [f,g,h] to adjust gain, [e] to toggle spectrum, ESC to quit.\n");
 	pwr_max = 0.0f;
 	pwr_diff = 1.0f;
