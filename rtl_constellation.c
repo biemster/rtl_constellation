@@ -49,9 +49,11 @@ fftw_complex *fftw_in;
 fftw_complex *fftw_out;
 fftw_plan fftw_p;
 
-#define DEFAULT_BUF_LENGTH		1024 * 16		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
-// #define DEFAULT_SAMPLE_RATE		DEFAULT_BUF_LENGTH *32
-#define DEFAULT_SAMPLE_RATE		1024 * 1e3
+#define DEFAULT_BUF_LENGTH		2048 * 32		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
+#define DEFAULT_SAMPLE_RATE		2048 * 512		// The sample rates are dictated by the RTL2832U chip, not the tuner chip.
+												// The RTL2832U can sample from two ranges ...
+												// 225001 to 300000 and 900001 to 3200000.
+												// Pick any number that lies in either of those two ranges.
 
 #define PLL_LOCK_STEPS 2048
 
@@ -252,12 +254,12 @@ int glut_init(int *argc,char **argv)
 	glutKeyboardFunc(glut_keyboard);
 }
 
-float pll_lock() {
+float pll_lock_simple() {
 	// IMPROVE: add to loop in readData()
 	// http://liquidsdr.org/blog/pll-simple-howto/
 
 	// parameters and simulation options
-	float        alpha         =  0.05f;   // phase adjustment factor
+	float alpha             =  0.05f;   // phase adjustment factor
 
 	// initialize states
 	float beta              = 0.5*alpha*alpha; // frequency adjustment factor
@@ -299,6 +301,77 @@ float pll_lock() {
 	return navg ? frequency_out_avg / navg : 0.;
 }
 
+float pll_lock() {
+	// IMPROVE: add to loop in readData()
+	// http://liquidsdr.org/blog/pll-howto/
+
+	// parameters
+	float wn                = 0.01f;    // pll bandwidth
+	float zeta              = 0.707f;   // pll damping factor
+	float K                 = 1000;     // pll loop gain
+
+	// generate loop filter parameters (active PI design)
+	float t1 = K/(wn*wn);   // tau_1
+	float t2 = 2*zeta/wn;   // tau_2
+
+	// feed-forward coefficients (numerator)
+	float b0 = (4*K/t1)*(1.+t2/2.0f);
+	float b1 = (8*K/t1);
+	float b2 = (4*K/t1)*(1.-t2/2.0f);
+
+	// feed-back coefficients (denominator)
+	//    a0 =  1.0  is implied
+	float a1 = -2.0f;
+	float a2 =  1.0f;
+
+	// filter buffer
+	float v0=0.0f, v1=0.0f, v2=0.0f;
+	
+	// initialize states
+	float phi_hat = 0.0f;           // PLL's initial phase
+	float phi_hat_avg = 0.0f;
+
+
+	uint32_t N = DEFAULT_BUF_LENGTH/2;
+	int navg = 0;
+	int i;
+	float complex x;
+	float complex y;
+	for(i = 0 ; i < N ; i++)
+	{
+		float sigI = (buffer[i*2] -127) * 0.008;		// adc is 8 bits, map (0,255) to (-1,1)
+		float sigQ = (buffer[i*2 +1] -127) * 0.008;
+		x = sigI + sigQ*I;
+
+		// compute PLL output from phase estimate
+		y = cosf(phi_hat) + _Complex_I*sinf(phi_hat);
+		float phi_hat_prev = phi_hat;
+
+		// compute error estimate
+		float delta_phi = cargf( x * conjf(y) );
+
+		// push result through loop filter, updating phase estimate
+
+		// advance buffer
+		v2 = v1;  // shift center register to upper register
+		v1 = v0;  // shift lower register to center register
+
+		// compute new lower register
+		v0 = delta_phi - v1*a1 - v2*a2;
+
+		// compute new output
+		phi_hat = v0*b0 + v1*b1 + v2*b2;
+
+		// if the phase error is small, the loop is locked and we can use the frequency in the average
+		if(i > PLL_LOCK_STEPS && fabs(delta_phi) < 0.1 * 2*M_PI) {
+			phi_hat_avg += phi_hat - phi_hat_prev;
+			navg++;
+		}
+	}
+
+	return navg ? phi_hat_avg / navg : 0.;
+}
+
 void readData(int line_idx) {	
 	uint32_t out_block_size = DEFAULT_BUF_LENGTH;
 	int n_read;
@@ -315,8 +388,8 @@ void readData(int line_idx) {
 		return;
 	}
 
-	float pll_freq = pll_lock();
-//	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
+	float pll_freq = pll_lock_simple();
+	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
 	
 	// fade current buffer
 	int i,j;
