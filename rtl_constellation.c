@@ -49,13 +49,13 @@ fftw_complex *fftw_in;
 fftw_complex *fftw_out;
 fftw_plan fftw_p;
 
-#define DEFAULT_BUF_LENGTH		2048 * 32		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
-#define DEFAULT_SAMPLE_RATE		2048 * 512		// The sample rates are dictated by the RTL2832U chip, not the tuner chip.
+#define DEFAULT_BUF_LENGTH		2048 * 1		//  [min,max]=[512,(256 * 16384)], update freq = (DEFAULT_SAMPLE_RATE / DEFAULT_BUF_LENGTH) Hz
+#define DEFAULT_SAMPLE_RATE		2048 * 1e3		// The sample rates are dictated by the RTL2832U chip, not the tuner chip.
 												// The RTL2832U can sample from two ranges ...
 												// 225001 to 300000 and 900001 to 3200000.
 												// Pick any number that lies in either of those two ranges.
 
-#define PLL_LOCK_STEPS 2048
+#define PLL_LOCK_STEPS 10
 
 // Not all tuners can go to either extreme...
 #define RTL_MIN_FREQ 22e6
@@ -259,13 +259,15 @@ float pll_lock_simple() {
 	// http://liquidsdr.org/blog/pll-simple-howto/
 
 	// parameters and simulation options
-	float alpha             =  0.05f;   // phase adjustment factor
+	float alpha             =  0.5f;   // phase adjustment factor
 
 	// initialize states
 	float beta              = 0.5*alpha*alpha; // frequency adjustment factor
 	float phase_out         = 0.0f;            // output signal phase
 	float frequency_out     = 0.0f;            // output signal frequency
 	float frequency_out_avg = 0.0f;            // output signal frequency
+
+	int pll_searching = PLL_LOCK_STEPS;
 
 	uint32_t N = DEFAULT_BUF_LENGTH/2;
 	int navg = 0;
@@ -292,9 +294,17 @@ float pll_lock_simple() {
 		phase_out += frequency_out;
 
 		// if the phase error is small, the loop is locked and we can use the frequency in the average
-		if(i > PLL_LOCK_STEPS && fabs(phase_error) < 0.1 * 2*M_PI) {
-			frequency_out_avg += phase_out - phase_out_prev;
-			navg++;
+		if(fabs(phase_error) < 1) {
+			if(!pll_searching) {
+				frequency_out_avg += phase_out - phase_out_prev;
+				navg++;
+			}
+			else {
+				pll_searching--;
+			}
+		}
+		else {
+			pll_searching = PLL_LOCK_STEPS;
 		}
 	}
 
@@ -306,7 +316,7 @@ float pll_lock() {
 	// http://liquidsdr.org/blog/pll-howto/
 
 	// parameters
-	float wn                = 0.01f;    // pll bandwidth
+	float wn                = 0.1f;    // pll bandwidth
 	float zeta              = 0.707f;   // pll damping factor
 	float K                 = 1000;     // pll loop gain
 
@@ -331,6 +341,7 @@ float pll_lock() {
 	float phi_hat = 0.0f;           // PLL's initial phase
 	float phi_hat_avg = 0.0f;
 
+	int pll_searching = PLL_LOCK_STEPS;
 
 	uint32_t N = DEFAULT_BUF_LENGTH/2;
 	int navg = 0;
@@ -363,9 +374,17 @@ float pll_lock() {
 		phi_hat = v0*b0 + v1*b1 + v2*b2;
 
 		// if the phase error is small, the loop is locked and we can use the frequency in the average
-		if(i > PLL_LOCK_STEPS && fabs(delta_phi) < 0.1 * 2*M_PI) {
-			phi_hat_avg += phi_hat - phi_hat_prev;
-			navg++;
+		if(fabs(delta_phi) < 1) {
+			if(!pll_searching) {
+				phi_hat_avg += phi_hat - phi_hat_prev;
+				navg++;
+			}
+			else {
+				pll_searching--;
+			}
+		}
+		else {
+			pll_searching = PLL_LOCK_STEPS;
 		}
 	}
 
@@ -442,7 +461,6 @@ void readData(int line_idx) {
 	for(i = 0 ; i < N ; i++) {
 		if(i == (int)(i_flt + ((2*M_PI) / pll_freq)) && pll_freq > 0.) {
 			// draw constellation points
-			i_flt += (2*M_PI) / pll_freq;
 			int sigI = (int)((buffer[i*2] / 255.) * GLUT_BUFSIZE);		// adc is 8 bits, map (0,255) to (0,1) * GLUT_BUFSIZE
 			int sigQ = (int)((buffer[i*2 +1] / 255.) * GLUT_BUFSIZE);
 
@@ -453,13 +471,18 @@ void readData(int line_idx) {
 				texture[sigI][sigQ][1] = 0.0f; // green
 				texture[sigI][sigQ][2] = 0.0f; // blue
 			}
+			
+			i_flt += (2*M_PI) / pll_freq;
 		}
 
 		if(show_spectrum) {
 			fftw_in[i][0] = (buffer[i*2] -127) * 0.008;		// adc is 8 bits, map (0,255) to (-1,1)
 			fftw_in[i][1] = (buffer[i*2 +1] -127) * 0.008;
 		}
+
+		//fprintf(stdout, "%.4f,%.4f\n", (buffer[i*2] -127) * 0.008,(buffer[i*2 +1] -127) * 0.008);
 	}
+	//fprintf(stdout, "---- %.8\n", pll_freq);
 
 	if(show_spectrum) {
 		fftw_execute(fftw_p);
