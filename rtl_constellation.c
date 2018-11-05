@@ -254,9 +254,10 @@ int glut_init(int *argc,char **argv)
 	glutKeyboardFunc(glut_keyboard);
 }
 
-float pll_lock_simple() {
+float pll_lock_ls() {
 	// IMPROVE: add to loop in readData()
 	// http://liquidsdr.org/blog/pll-simple-howto/
+	// least squares: https://stackoverflow.com/questions/5083465/fast-efficient-least-squares-fit-algorithm-in-c
 
 	// parameters and simulation options
 	float alpha             =  0.5f;   // phase adjustment factor
@@ -265,12 +266,16 @@ float pll_lock_simple() {
 	float beta              = 0.5*alpha*alpha; // frequency adjustment factor
 	float phase_out         = 0.0f;            // output signal phase
 	float frequency_out     = 0.0f;            // output signal frequency
-	float frequency_out_avg = 0.0f;            // output signal frequency
 
 	int pll_searching = PLL_LOCK_STEPS;
+	float sumx  = 0.0f;
+	float sumx2 = 0.0f;
+	float sumxy = 0.0f;
+	float sumy  = 0.0f;
+	float sumy2 = 0.0f;
 
 	uint32_t N = DEFAULT_BUF_LENGTH/2;
-	int navg = 0;
+	int nls = 0;
 	int i;
 	for(i = 0 ; i < N ; i++)
 	{
@@ -278,7 +283,6 @@ float pll_lock_simple() {
 		float sigQ = (buffer[i*2 +1] -127) * 0.008;
 		float complex signal_in  = sigI+sigQ*I;
 		float complex signal_out = cexpf(_Complex_I * phase_out);
-		float phase_out_prev = phase_out;
 
 		pll[i*2] = (crealf(signal_out) / 0.008) + 127;
 		pll[i*2 +1] = (cimagf(signal_out) / 0.008) + 127;
@@ -296,8 +300,12 @@ float pll_lock_simple() {
 		// if the phase error is small, the loop is locked and we can use the frequency in the average
 		if(fabs(phase_error) < 1) {
 			if(!pll_searching) {
-				frequency_out_avg += phase_out - phase_out_prev;
-				navg++;
+				sumx  += i;
+				sumx2 += i*i;
+				sumxy += i * phase_out;
+				sumy  += phase_out;
+				// sumy2 += phase_out * phase_out;
+				nls++;
 			}
 			else {
 				pll_searching--;
@@ -308,7 +316,16 @@ float pll_lock_simple() {
 		}
 	}
 
-	return navg ? frequency_out_avg / navg : 0.;
+	// calculate linear regression y = mx + b
+	float denom = (nls * sumx2) - (sumx*sumx);
+	//if(denom == 0) {
+	//	// not going to happen
+	//	return 0.;
+	//}
+	float m = ((nls * sumxy) - (sumx * sumy)) / denom;
+	// b = ((sumy * sumx2) - (sumx * sumxy)) / denom;
+
+	return m;
 }
 
 float pll_lock() {
@@ -407,7 +424,7 @@ void readData(int line_idx) {
 		return;
 	}
 
-	float pll_freq = pll_lock_simple();
+	float pll_freq = pll_lock_ls();
 	fprintf(stderr, "\rPLL locked on %.07f", pll_freq);
 	
 	// fade current buffer
@@ -480,9 +497,9 @@ void readData(int line_idx) {
 			fftw_in[i][1] = (buffer[i*2 +1] -127) * 0.008;
 		}
 
-		//fprintf(stdout, "%.4f,%.4f\n", (buffer[i*2] -127) * 0.008,(buffer[i*2 +1] -127) * 0.008);
+		// fprintf(stdout, "%.4f,%.4f\n", (buffer[i*2] -127) * 0.008,(buffer[i*2 +1] -127) * 0.008);
 	}
-	//fprintf(stdout, "---- %.8\n", pll_freq);
+	// fprintf(stdout, "---- %d:%.8f\n", line_idx, pll_freq);
 
 	if(show_spectrum) {
 		fftw_execute(fftw_p);
